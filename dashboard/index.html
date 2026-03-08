@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsApp Bot Dashboard</title>
+<link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&family=Consolas&display=swap" rel="stylesheet">
+</head>
+<body>
+<!-- Desktop -->
+<div id="desktop">
+  <!-- Taskbar -->
+  <div id="taskbar">
+    <div id="start-btn" onclick="toggleStartMenu()">
+      <span class="win-icon">⊞</span> Start
+    </div>
+    <div id="taskbar-apps">
+      <div class="taskbar-app active" onclick="focusWindow('dashboard')">
+        <span>🤖</span> Bot Dashboard
+      </div>
+    </div>
+    <div id="taskbar-right">
+      <div id="clock" class="taskbar-clock"></div>
+      <div id="connection-indicator" class="indicator disconnected">●</div>
+    </div>
+  </div>
+
+  <!-- Start Menu -->
+  <div id="start-menu" class="hidden">
+    <div class="start-header">
+      <div class="start-avatar">🤖</div>
+      <div class="start-user">WhatsApp Bot</div>
+    </div>
+    <div class="start-items">
+      <div class="start-item" onclick="openWindow('qr-window'); toggleStartMenu()">
+        📱 QR Code Login
+      </div>
+      <div class="start-item" onclick="openWindow('groups-window'); toggleStartMenu()">
+        👥 Groups Manager
+      </div>
+      <div class="start-item" onclick="openWindow('stats-window'); toggleStartMenu()">
+        📊 Bot Statistics
+      </div>
+      <div class="start-item" onclick="openWindow('terminal-window'); toggleStartMenu()">
+        💬 Send Message
+      </div>
+      <div class="start-item" onclick="openWindow('settings-window'); toggleStartMenu()">
+        ⚙️ Bot Settings
+      </div>
+    </div>
+    <div class="start-footer">
+      <button onclick="logout()" class="start-shutdown">⏻ Logout Bot</button>
+    </div>
+  </div>
+
+  <!-- Desktop Icons -->
+  <div id="desktop-icons">
+    <div class="desktop-icon" ondblclick="openWindow('qr-window')">
+      <div class="icon-img">📱</div>
+      <div class="icon-label">QR Login</div>
+    </div>
+    <div class="desktop-icon" ondblclick="openWindow('groups-window')">
+      <div class="icon-img">👥</div>
+      <div class="icon-label">Groups</div>
+    </div>
+    <div class="desktop-icon" ondblclick="openWindow('stats-window')">
+      <div class="icon-img">📊</div>
+      <div class="icon-label">Statistics</div>
+    </div>
+    <div class="desktop-icon" ondblclick="openWindow('terminal-window')">
+      <div class="icon-img">💬</div>
+      <div class="icon-label">Send Message</div>
+    </div>
+    <div class="desktop-icon" ondblclick="openWindow('settings-window')">
+      <div class="icon-img">⚙️</div>
+      <div class="icon-label">Settings</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════ WINDOWS ═══════════════════ -->
+
+  <!-- QR Window -->
+  <div id="qr-window" class="win-window" style="left:80px;top:60px;width:420px;height:520px;">
+    <div class="win-titlebar" onmousedown="dragStart(event, 'qr-window')">
+      <span class="win-icon">📱</span>
+      <span class="win-title">QR Code Login</span>
+      <div class="win-controls">
+        <button class="win-btn minimize" onclick="minimizeWindow('qr-window')">─</button>
+        <button class="win-btn maximize" onclick="maximizeWindow('qr-window')">□</button>
+        <button class="win-btn close" onclick="closeWindow('qr-window')">✕</button>
+      </div>
+    </div>
+    <div class="win-body">
+      <div id="qr-status-bar" class="status-bar disconnected">
+        <span class="status-dot"></span>
+        <span id="qr-status-text">Connecting to server...</span>
+      </div>
+      <div id="qr-container">
+        <div id="qr-loading" class="qr-loading">
+          <div class="loading-spinner"></div>
+          <p>Waiting for QR code...</p>
+          <p class="subtle">Make sure the bot server is running</p>
+        </div>
+        <div id="qr-display" class="hidden">
+          <div class="qr-frame">
+            <img id="qr-image" src="" alt="QR Code">
+          </div>
+          <p class="qr-instructions">Open <strong>WhatsApp</strong> → <strong>Linked Devices</strong> → Scan QR</p>
+          <p class="qr-expires">QR code expires in <span id="qr-timer">60</span>s</p>
+        </div>
+        <div id="qr-connected" class="hidden">
+          <div class="connected-anim">✅</div>
+          <h2>Bot Connected!</h2>
+          <p>WhatsApp bot is online and running.</p>
+          <div id="bot-phone" class="bot-phone"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Groups Window -->
+  <div id="groups-window" class="win-window hidden" style="left:520px;top:60px;width:700px;height:580px;">
+    <div class="win-titlebar" onmousedown="dragStart(event, 'groups-window')">
+      <span class="win-icon">👥</span>
+      <span class="win-title">Groups Manager</span>
+      <div class="win-controls">
+        <button class="win-btn minimize" onclick="minimizeWindow('groups-window')">─</button>
+        <button class="win-btn maximize" onclick="maximizeWindow('groups-window')">□</button>
+        <button class="win-btn close" onclick="closeWindow('groups-window')">✕</button>
+      </div>
+    </div>
+    <div class="win-body split-layout">
+      <!-- Groups List -->
+      <div class="groups-panel">
+        <div class="panel-header">
+          <span>📋 Groups</span>
+          <button class="panel-refresh" onclick="loadGroups()">↻</button>
+        </div>
+        <input type="text" id="group-search" placeholder="🔍 Search groups..." oninput="filterGroups(this.value)" class="search-input">
+        <div id="groups-list" class="groups-list">
+          <div class="empty-state">No groups loaded.<br>Connect bot first.</div>
+        </div>
+      </div>
+      <!-- Group Settings -->
+      <div class="settings-panel">
+        <div id="no-group-selected" class="no-group">
+          <div class="no-group-icon">👈</div>
+          <p>Select a group to manage its settings</p>
+        </div>
+        <div id="group-settings-panel" class="hidden">
+          <div class="group-settings-header">
+            <div class="group-avatar" id="settings-group-avatar">👥</div>
+            <div>
+              <h3 id="settings-group-name">Group Name</h3>
+              <span id="settings-group-members" class="group-members-count"></span>
+            </div>
+          </div>
+          
+          <!-- Tabs -->
+          <div class="settings-tabs">
+            <button class="tab-btn active" onclick="switchTab('moderation')">🛡️ Moderation</button>
+            <button class="tab-btn" onclick="switchTab('features')">⚙️ Features</button>
+            <button class="tab-btn" onclick="switchTab('messages')">💬 Messages</button>
+            <button class="tab-btn" onclick="switchTab('advanced')">🔧 Advanced</button>
+          </div>
+
+          <!-- Moderation Tab -->
+          <div id="tab-moderation" class="tab-content active">
+            <div class="toggle-grid">
+              <div class="toggle-item">
+                <label>🔞 Anti-NSFW ছবি</label>
+                <label class="switch"><input type="checkbox" id="s-antiNSFW" onchange="saveSetting('antiNSFW',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🔗 Anti-Link</label>
+                <label class="switch"><input type="checkbox" id="s-antiLink" onchange="saveSetting('antiLink',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🚫 Anti-Spam</label>
+                <label class="switch"><input type="checkbox" id="s-antiSpam" onchange="saveSetting('antiSpam',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🤖 Anti-Bot</label>
+                <label class="switch"><input type="checkbox" id="s-antiBot" onchange="saveSetting('antiBot',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🗑️ Anti-Delete</label>
+                <label class="switch"><input type="checkbox" id="s-antiDelete" onchange="saveSetting('antiDelete',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>💧 Anti-Flood</label>
+                <label class="switch"><input type="checkbox" id="s-antiFlood" onchange="saveSetting('antiFlood',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🤬 Bad Word Filter</label>
+                <label class="switch"><input type="checkbox" id="s-badWordFilter" onchange="saveSetting('badWordFilter',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>👢 Auto Kick</label>
+                <label class="switch"><input type="checkbox" id="s-autoKick" onchange="saveSetting('autoKick',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>⚠️ Auto Warn</label>
+                <label class="switch"><input type="checkbox" id="s-autoWarn" onchange="saveSetting('autoWarn',this.checked)"><span class="slider"></span></label>
+              </div>
+            </div>
+            <div class="settings-row">
+              <label>Max Warnings Before Kick:</label>
+              <input type="number" id="s-maxWarns" min="1" max="10" value="3" onchange="saveSetting('maxWarns',parseInt(this.value))" class="num-input">
+            </div>
+          </div>
+
+          <!-- Features Tab -->
+          <div id="tab-features" class="tab-content hidden">
+            <div class="toggle-grid">
+              <div class="toggle-item">
+                <label>👋 Welcome Message</label>
+                <label class="switch"><input type="checkbox" id="s-welcome" onchange="saveSetting('welcome',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>👋 Goodbye Message</label>
+                <label class="switch"><input type="checkbox" id="s-goodbye" onchange="saveSetting('goodbye',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>⭐ XP System</label>
+                <label class="switch"><input type="checkbox" id="s-xpSystem" onchange="saveSetting('xpSystem',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>💰 Economy</label>
+                <label class="switch"><input type="checkbox" id="s-economy" onchange="saveSetting('economy',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>😂 Auto React</label>
+                <label class="switch"><input type="checkbox" id="s-autoReact" onchange="saveSetting('autoReact',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>🔇 Group Muted</label>
+                <label class="switch"><input type="checkbox" id="s-muted" onchange="saveSetting('muted',this.checked)"><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Messages Tab -->
+          <div id="tab-messages" class="tab-content hidden">
+            <div class="msg-setting">
+              <label>Welcome Message:</label>
+              <small>Use @user for member name</small>
+              <textarea id="s-welcomeMsg" rows="3" class="msg-textarea" onchange="saveSetting('welcomeMsg',this.value)" placeholder="Welcome @user to the group! 👋"></textarea>
+            </div>
+            <div class="msg-setting">
+              <label>Goodbye Message:</label>
+              <textarea id="s-goodbyeMsg" rows="3" class="msg-textarea" onchange="saveSetting('goodbyeMsg',this.value)" placeholder="Goodbye @user! 👋"></textarea>
+            </div>
+            <div class="msg-setting">
+              <label>Command Prefix:</label>
+              <input type="text" id="s-prefix" class="prefix-input" maxlength="3" onchange="saveSetting('prefix',this.value)" placeholder="!">
+            </div>
+            <div class="msg-setting">
+              <label>Auto Reply (keyword:reply):</label>
+              <div id="auto-replies-list"></div>
+              <div class="add-reply-row">
+                <input type="text" id="reply-keyword" placeholder="keyword" class="reply-input">
+                <input type="text" id="reply-text" placeholder="reply text" class="reply-input">
+                <button onclick="addAutoReply()" class="add-btn">+ Add</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Advanced Tab -->
+          <div id="tab-advanced" class="tab-content hidden">
+            <div class="toggle-grid">
+              <div class="toggle-item">
+                <label>⌨️ Auto Typing</label>
+                <label class="switch"><input type="checkbox" id="s-autoTyping" onchange="saveSetting('autoTyping',this.checked)"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-item">
+                <label>↩️ Auto Reply</label>
+                <label class="switch"><input type="checkbox" id="s-autoReply" onchange="saveSetting('autoReply',this.checked)"><span class="slider"></span></label>
+              </div>
+            </div>
+            <div class="bad-words-section">
+              <label>Banned Words:</label>
+              <div id="bad-words-tags" class="tags-container"></div>
+              <div class="add-reply-row">
+                <input type="text" id="new-bad-word" placeholder="Add bad word..." class="reply-input">
+                <button onclick="addBadWord()" class="add-btn">+ Add</button>
+              </div>
+            </div>
+            <div class="danger-zone">
+              <h4>⚠️ Actions</h4>
+              <button class="action-btn danger" onclick="sendGroupMessage()">📢 Send Group Message</button>
+            </div>
+          </div>
+
+          <div class="settings-save-bar">
+            <span id="save-indicator" class="save-indicator"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats Window -->
+  <div id="stats-window" class="win-window hidden" style="left:200px;top:100px;width:500px;height:400px;">
+    <div class="win-titlebar" onmousedown="dragStart(event, 'stats-window')">
+      <span class="win-icon">📊</span>
+      <span class="win-title">Bot Statistics</span>
+      <div class="win-controls">
+        <button class="win-btn minimize" onclick="minimizeWindow('stats-window')">─</button>
+        <button class="win-btn maximize" onclick="maximizeWindow('stats-window')">□</button>
+        <button class="win-btn close" onclick="closeWindow('stats-window')">✕</button>
+      </div>
+    </div>
+    <div class="win-body stats-body">
+      <div class="stat-cards">
+        <div class="stat-card green">
+          <div class="stat-icon">💬</div>
+          <div class="stat-value" id="stat-messages">0</div>
+          <div class="stat-label">Messages Handled</div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-icon">⚡</div>
+          <div class="stat-value" id="stat-commands">0</div>
+          <div class="stat-label">Commands Run</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-icon">👥</div>
+          <div class="stat-value" id="stat-groups">0</div>
+          <div class="stat-label">Groups Joined</div>
+        </div>
+        <div class="stat-card orange">
+          <div class="stat-icon">⏱️</div>
+          <div class="stat-value" id="stat-uptime">0s</div>
+          <div class="stat-label">Uptime</div>
+        </div>
+      </div>
+      <div class="status-section">
+        <h3>Connection Status</h3>
+        <div id="full-status-display" class="full-status">
+          <div class="status-row"><span>Bot Status:</span><span id="fs-status" class="badge disconnected">Disconnected</span></div>
+          <div class="status-row"><span>Groups Active:</span><span id="fs-groups">-</span></div>
+          <div class="status-row"><span>Server Port:</span><span>3000</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal/Send Message Window -->
+  <div id="terminal-window" class="win-window hidden" style="left:120px;top:200px;width:520px;height:380px;">
+    <div class="win-titlebar" onmousedown="dragStart(event, 'terminal-window')" style="background:#1a1a2e;">
+      <span class="win-icon">💬</span>
+      <span class="win-title">Send Message</span>
+      <div class="win-controls">
+        <button class="win-btn minimize" onclick="minimizeWindow('terminal-window')">─</button>
+        <button class="win-btn maximize" onclick="maximizeWindow('terminal-window')">□</button>
+        <button class="win-btn close" onclick="closeWindow('terminal-window')">✕</button>
+      </div>
+    </div>
+    <div class="win-body terminal-body">
+      <div id="terminal-output" class="terminal-output">
+        <span class="terminal-banner">WhatsApp Bot Terminal v1.0</span><br>
+        <span class="terminal-info">Type a message and select a group to send...</span><br><br>
+      </div>
+      <div class="terminal-input-row">
+        <select id="send-group-select" class="terminal-select">
+          <option value="">Select group...</option>
+        </select>
+        <textarea id="terminal-msg" class="terminal-input" placeholder="Type message..." rows="2"></textarea>
+        <button class="terminal-send-btn" onclick="sendMessage()">Send ➤</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Window -->
+  <div id="settings-window" class="win-window hidden" style="left:300px;top:80px;width:450px;height:500px;">
+    <div class="win-titlebar" onmousedown="dragStart(event, 'settings-window')">
+      <span class="win-icon">⚙️</span>
+      <span class="win-title">Bot Settings</span>
+      <div class="win-controls">
+        <button class="win-btn minimize" onclick="minimizeWindow('settings-window')">─</button>
+        <button class="win-btn maximize" onclick="maximizeWindow('settings-window')">□</button>
+        <button class="win-btn close" onclick="closeWindow('settings-window')">✕</button>
+      </div>
+    </div>
+    <div class="win-body settings-body">
+      <div class="settings-nav">
+        <button class="settings-nav-btn active" onclick="switchSettingsTab('general')">🌐 General</button>
+        <button class="settings-nav-btn" onclick="switchSettingsTab('ai')">🤖 AI Config</button>
+        <button class="settings-nav-btn" onclick="switchSettingsTab('security')">🔒 Security</button>
+        <button class="settings-nav-btn" onclick="switchSettingsTab('about')">ℹ️ About</button>
+      </div>
+      <div class="settings-content">
+        <div id="stab-general" class="stab active">
+          <h3>General Settings</h3>
+          <div class="setting-row">
+            <label>Bot Name:</label>
+            <input type="text" value="WhatsAppBot" class="setting-input">
+          </div>
+          <div class="setting-row">
+            <label>Default Prefix:</label>
+            <input type="text" value="!" maxlength="3" class="setting-input short">
+          </div>
+          <div class="setting-row">
+            <label>Always Online:</label>
+            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <label>Auto Read Messages:</label>
+            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <label>Status React:</label>
+            <label class="switch"><input type="checkbox"><span class="slider"></span></label>
+          </div>
+        </div>
+        <div id="stab-ai" class="stab hidden">
+          <h3>AI Configuration</h3>
+          <div class="setting-row">
+            <label>AI Provider:</label>
+            <select class="setting-input">
+              <option>OpenRouter (Free)</option>
+              <option>OpenAI GPT</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label>OpenRouter API Key:</label>
+            <input type="password" placeholder="sk-or-..." class="setting-input">
+          </div>
+          <div class="setting-row">
+            <label>HuggingFace API Key:</label>
+            <input type="password" placeholder="hf_..." class="setting-input">
+          </div>
+          <p class="hint">🆓 Get free OpenRouter key at <strong>openrouter.ai</strong><br>🆓 Get free HuggingFace key at <strong>huggingface.co</strong></p>
+        </div>
+        <div id="stab-security" class="stab hidden">
+          <h3>Security Settings</h3>
+          <div class="setting-row">
+            <label>Global Anti-Link:</label>
+            <label class="switch"><input type="checkbox"><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <label>Anti-Bot Detection:</label>
+            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <label>Fake Number Detection:</label>
+            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <label>Rate Limit (msg/5s):</label>
+            <input type="number" value="5" min="1" max="20" class="setting-input short">
+          </div>
+        </div>
+        <div id="stab-about" class="stab hidden">
+          <div class="about-box">
+            <div class="about-logo">🤖</div>
+            <h2>WhatsApp Bot Dashboard</h2>
+            <p>Version 1.0.0</p>
+            <hr>
+            <p>Built with:</p>
+            <p>• Baileys (WhatsApp Web API)</p>
+            <p>• Node.js + Express</p>
+            <p>• Socket.io (realtime)</p>
+            <p>• Windows-style UI</p>
+            <hr>
+            <p class="subtle">Free APIs: OpenRouter, HuggingFace, MyMemory</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+</div><!-- /desktop -->
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
