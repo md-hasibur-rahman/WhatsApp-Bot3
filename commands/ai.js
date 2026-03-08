@@ -8,7 +8,7 @@ async function callAI(prompt, systemPrompt = 'You are a helpful assistant.') {
     const resp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'mistralai/mistral-7b-instruct:free',
+        model: 'mistralai/mistral-7b-instruct-v0.3',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
