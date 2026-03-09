@@ -111,9 +111,12 @@ async function startBot() {
       auth: state,
       msgRetryCounterCache,
       generateHighQualityLinkPreview: false,
-      connectTimeoutMs: 60000,
-      defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 10000,
+      connectTimeoutMs: 120000,
+      defaultQueryTimeoutMs: 120000,
+      keepAliveIntervalMs: 15000,
+      retryRequestDelayMs: 2000,
+      qrTimeout: 45000,
+      browser: ['WhatsApp Bot', 'Chrome', '120.0.0'],
       getMessage: async (key) => {
         if (store) {
           const msg = await store.loadMessage(key.remoteJid, key.id);
