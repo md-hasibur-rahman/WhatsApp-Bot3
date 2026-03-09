@@ -25,6 +25,16 @@ socket.on('connect', () => {
   console.log('Connected to server');
   fetchStatus();
   loadGroups();
+  socket.emit('requestQR');
+  // প্রতি ৫ সেকেন্ডে QR চাও
+  setInterval(() => {
+    if (!botConnected) {
+      socket.emit('requestQR');
+      fetch('/api/qr').then(r => r.json()).then(data => {
+        if (data.qr) showQR(data.qr);
+      }).catch(() => {});
+    }
+  }, 5000);
 });
 
 socket.on('status', (data) => {
@@ -225,117 +235,7 @@ function renderGroupSettings(s) {
   setCheck('s-antiFlood', s.antiFlood);
   setCheck('s-badWordFilter', s.badWordFilter);
   setCheck('s-autoKick', s.autoKick);
-  setCheck('s-autoWarn', s.autoWarn);
-  setCheck('s-welcome', s.welcome);
-  setCheck('s-goodbye', s.goodbye);
-  setCheck('s-xpSystem', s.xpSystem);
-  setCheck('s-economy', s.economy);
-  setCheck('s-autoReact', s.autoReact);
-  setCheck('s-muted', s.muted);
-  setCheck('s-autoTyping', s.autoTyping);
-  setCheck('s-autoReply', s.autoReply);
-
-  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-  setVal('s-welcomeMsg', s.welcomeMsg);
-  setVal('s-goodbyeMsg', s.goodbyeMsg);
-  setVal('s-prefix', s.prefix || '!');
-  setVal('s-maxWarns', s.maxWarns || 3);
-
-  // Bad words
-  renderBadWords(s.badWords || []);
-
-  // Auto replies
-  renderAutoReplies(s.autoReplyTriggers || {});
-}
-
-async function saveSetting(key, value) {
-  if (!selectedGroupId) return;
-  currentGroupSettings[key] = value;
-
-  try {
-    await fetch(`/api/group/${encodeURIComponent(selectedGroupId)}/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [key]: value })
-    });
-    const ind = document.getElementById('save-indicator');
-    if (ind) {
-      ind.textContent = '✓ Saved';
-      setTimeout(() => { if (ind) ind.textContent = ''; }, 2000);
-    }
-  } catch (e) {
-    showToast('Failed to save setting', 'error');
-  }
-}
-
-// ─── Bad Words ────────────────────────────────────────────────────────────────
-function renderBadWords(words) {
-  const container = document.getElementById('bad-words-tags');
-  if (!container) return;
-  container.innerHTML = words.map(w => `
-    <span class="tag">
-      ${escapeHtml(w)}
-      <span class="tag-remove" onclick="removeBadWord('${escapeHtml(w)}')">×</span>
-    </span>
-  `).join('');
-}
-
-function addBadWord() {
-  const input = document.getElementById('new-bad-word');
-  const word = input.value.trim().toLowerCase();
-  if (!word || !selectedGroupId) return;
-
-  const words = currentGroupSettings.badWords || [];
-  if (!words.includes(word)) {
-    words.push(word);
-    currentGroupSettings.badWords = words;
-    saveSetting('badWords', words);
-    renderBadWords(words);
-  }
-  input.value = '';
-}
-
-function removeBadWord(word) {
-  if (!currentGroupSettings.badWords) return;
-  currentGroupSettings.badWords = currentGroupSettings.badWords.filter(w => w !== word);
-  saveSetting('badWords', currentGroupSettings.badWords);
-  renderBadWords(currentGroupSettings.badWords);
-}
-
-// ─── Auto Replies ─────────────────────────────────────────────────────────────
-function renderAutoReplies(triggers) {
-  const container = document.getElementById('auto-replies-list');
-  if (!container) return;
-
-  const entries = Object.entries(triggers);
-  if (!entries.length) {
-    container.innerHTML = '<div style="font-size:12px;color:#888;padding:4px 0;">No auto replies set.</div>';
-    return;
-  }
-  container.innerHTML = entries.map(([k, v]) => `
-    <div class="auto-reply-item">
-      <span><strong>${escapeHtml(k)}</strong> → ${escapeHtml(v)}</span>
-      <span class="reply-remove" onclick="removeAutoReply('${escapeHtml(k)}')">×</span>
-    </div>
-  `).join('');
-}
-
-function addAutoReply() {
-  const keyword = document.getElementById('reply-keyword').value.trim().toLowerCase();
-  const reply = document.getElementById('reply-text').value.trim();
-  if (!keyword || !reply || !selectedGroupId) return;
-
-  if (!currentGroupSettings.autoReplyTriggers) currentGroupSettings.autoReplyTriggers = {};
-  currentGroupSettings.autoReplyTriggers[keyword] = reply;
-  saveSetting('autoReplyTriggers', currentGroupSettings.autoReplyTriggers);
-  renderAutoReplies(currentGroupSettings.autoReplyTriggers);
-
-  document.getElementById('reply-keyword').value = '';
-  document.getElementById('reply-text').value = '';
-}
-
-function removeAutoReply(keyword) {
-  if (!currentGroupSettings.autoReplyTriggers) return;
+< truncated lines 238-348 >
   delete currentGroupSettings.autoReplyTriggers[keyword];
   saveSetting('autoReplyTriggers', currentGroupSettings.autoReplyTriggers);
   renderAutoReplies(currentGroupSettings.autoReplyTriggers);
