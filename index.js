@@ -5,11 +5,7 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeInMemoryStore,
-  jidDecode,
-  proto,
   getContentType,
-  generateWAMessageFromContent,
-  prepareWAMessageMedia
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
@@ -35,10 +31,14 @@ const messageFilter = require('./utils/messageFilter');
 const groupManager = require('./utils/groupManager');
 const xpSystem = require('./utils/xpSystem');
 
-// ─── Express + Socket.io Setup ───────────────────────────────────────────────
+// ─── Express + Socket.io ──────────────────────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
-const io = socketIO(server, { cors: { origin: '*' } });
+const io = socketIO(server, {
+  cors: { origin: '*' },
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -46,7 +46,7 @@ app.use(express.static(path.join(__dirname, 'dashboard')));
 
 // ─── Bot State ────────────────────────────────────────────────────────────────
 let sock = null;
-let qrString = null;
+let latestQR = null;      // সবশেষ QR সেভ রাখো
 let botStatus = 'disconnected';
 let groups = {};
 let botStats = {
@@ -59,48 +59,44 @@ let botStats = {
 const msgRetryCounterCache = new NodeCache();
 const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
 
-// ─── Group Settings Store ─────────────────────────────────────────────────────
-const settingsFile = path.join(__dirname, 'data', 'groupSettings.json');
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-  fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-}
+// ─── Data Directory ───────────────────────────────────────────────────────────
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+const sessionsDir = path.join(__dirname, 'sessions');
+if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
+
+// ─── Group Settings ───────────────────────────────────────────────────────────
+const settingsFile = path.join(dataDir, 'groupSettings.json');
 let groupSettings = {};
-if (fs.existsSync(settingsFile)) {
-  groupSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-}
+try {
+  if (fs.existsSync(settingsFile)) {
+    groupSettings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+  }
+} catch (e) { groupSettings = {}; }
 
 function saveSettings() {
-  fs.writeFileSync(settingsFile, JSON.stringify(groupSettings, null, 2));
+  try { fs.writeFileSync(settingsFile, JSON.stringify(groupSettings, null, 2)); } catch(e) {}
 }
 
 function getGroupSettings(groupId) {
   if (!groupSettings[groupId]) {
     groupSettings[groupId] = {
-      welcome: false,
-      goodbye: false,
-      antiLink: false,
-      antiSpam: false,
-      antiBot: false,
-      antiDelete: false,
-      antiFlood: false,
-      badWordFilter: false,
-      autoKick: false,
-      autoWarn: false,
-      muted: false,
-      autoReact: false,
-      autoReply: false,
-      alwaysOnline: true,
-      autoTyping: false,
-      xpSystem: false,
-      economy: false,
+      welcome: false, goodbye: false,
+      antiLink: false, antiSpam: false,
+      antiBot: false, antiDelete: false,
+      antiFlood: false, badWordFilter: false,
+      autoKick: false, autoWarn: false,
+      muted: false, autoReact: false,
+      autoReply: false, alwaysOnline: true,
+      autoTyping: false, xpSystem: false,
+      economy: false, antiNSFW: false,
       welcomeMsg: 'Welcome to the group, @user! 👋',
       goodbyeMsg: 'Goodbye @user! We will miss you 👋',
       autoReplyTriggers: {},
-      badWords: ['spam', 'scam'],
-      warnCount: {},
-      maxWarns: 3,
-      bannedUsers: [],
-      premiumUsers: [],
+      badWords: [],
+      warnCount: {}, maxWarns: 3,
+      bannedUsers: [], premiumUsers: [],
       prefix: process.env.BOT_PREFIX || '!'
     };
     saveSettings();
@@ -108,286 +104,219 @@ function getGroupSettings(groupId) {
   return groupSettings[groupId];
 }
 
-// ─── Start WhatsApp Bot ───────────────────────────────────────────────────────
+// ─── WhatsApp Bot ─────────────────────────────────────────────────────────────
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState(
-    path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session')
-  );
+  try {
+    const sessionPath = path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session');
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { version } = await fetchLatestBaileysVersion();
+    console.log(`Using WA v${version.join('.')}`);
 
-  const { version } = await fetchLatestBaileysVersion();
-  console.log(`Using WA v${version.join('.')}`);
-
-  sock = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: true,
-    auth: state,
-    msgRetryCounterCache,
-    generateHighQualityLinkPreview: true,
-    getMessage: async (key) => {
-      if (store) {
-        const msg = await store.loadMessage(key.remoteJid, key.id);
-        return msg?.message || undefined;
+    sock = makeWASocket({
+      version,
+      logger: pino({ level: 'silent' }),
+      printQRInTerminal: true,
+      auth: state,
+      msgRetryCounterCache,
+      generateHighQualityLinkPreview: false,
+      connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 10000,
+      getMessage: async (key) => {
+        if (store) {
+          const msg = await store.loadMessage(key.remoteJid, key.id);
+          return msg?.message || undefined;
+        }
+        return { conversation: 'hello' };
       }
-      return { conversation: 'hello' };
-    }
-  });
+    });
 
-  store.bind(sock.ev);
+    store.bind(sock.ev);
 
-  // ── QR Code ──
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
+    // ── Connection Update ──
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      console.log('connection.update:', JSON.stringify({ connection, hasQR: !!qr }));
 
-    if (qr) {
-      qrString = await qrcode.toDataURL(qr);
-      botStatus = 'qr';
-      io.emit('qr', { qr: qrString });
-      io.emit('status', { status: 'qr', message: 'Scan QR Code' });
-    }
-
-    if (connection === 'close') {
-      const shouldReconnect =
-        lastDisconnect?.error instanceof Boom &&
-        lastDisconnect.error.output?.statusCode !== DisconnectReason.loggedOut;
-
-      botStatus = 'disconnected';
-      botStats.connected = false;
-      io.emit('status', { status: 'disconnected', message: 'Disconnected' });
-
-      if (shouldReconnect) {
-        setTimeout(startBot, 3000);
-      } else {
-        io.emit('status', { status: 'loggedout', message: 'Logged out. Refresh to scan QR again.' });
-        // Clear session
-        const sessionDir = path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session');
-        if (fs.existsSync(sessionDir)) {
-          fs.rmSync(sessionDir, { recursive: true, force: true });
+      if (qr) {
+        console.log('QR received! Converting to dataURL...');
+        try {
+          latestQR = await qrcode.toDataURL(qr);
+          botStatus = 'qr';
+          // সব connected socket কে QR পাঠাও
+          io.emit('qr', { qr: latestQR });
+          io.emit('status', { status: 'qr', message: 'QR Code Ready - Scan করো!' });
+          console.log('QR emitted to all clients');
+        } catch (err) {
+          console.error('QR convert error:', err.message);
         }
       }
-    }
 
-    if (connection === 'open') {
-      qrString = null;
-      botStatus = 'connected';
-      botStats.connected = true;
-      botStats.uptime = Date.now();
-      io.emit('status', { status: 'connected', message: 'Bot Connected ✓' });
+      if (connection === 'close') {
+        latestQR = null;
+        botStatus = 'disconnected';
+        botStats.connected = false;
+        io.emit('status', { status: 'disconnected', message: 'Disconnected - Reconnecting...' });
+
+        const statusCode = lastDisconnect?.error instanceof Boom
+          ? lastDisconnect.error.output?.statusCode
+          : null;
+
+        console.log('Connection closed. Status code:', statusCode);
+
+        if (statusCode === DisconnectReason.loggedOut) {
+          console.log('Logged out! Clearing session...');
+          io.emit('status', { status: 'loggedout', message: 'Logged out! Please refresh.' });
+          try {
+            const sessionDir = path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session');
+            if (fs.existsSync(sessionDir)) fs.rmSync(sessionDir, { recursive: true, force: true });
+          } catch(e) {}
+          setTimeout(startBot, 3000);
+        } else {
+          console.log('Reconnecting in 3 seconds...');
+          setTimeout(startBot, 3000);
+        }
+      }
+
+      if (connection === 'open') {
+        console.log('Bot connected successfully!');
+        latestQR = null;
+        botStatus = 'connected';
+        botStats.connected = true;
+        botStats.uptime = Date.now();
+        io.emit('status', { status: 'connected', message: 'Bot Connected ✓' });
+        await loadGroups();
+      }
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // ── Group participants update ──
+    sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
       await loadGroups();
-    }
-  });
-
-  // ── Credentials update ──
-  sock.ev.on('creds.update', saveCreds);
-
-  // ── Group updates ──
-  sock.ev.on('groups.update', async (updates) => {
-    await loadGroups();
-    io.emit('groups', { groups: Object.values(groups) });
-  });
-
-  sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
-    await loadGroups();
-    io.emit('groups', { groups: Object.values(groups) });
-
-    const settings = getGroupSettings(id);
-    const groupMeta = groups[id];
-    if (!groupMeta) return;
-
-    if (action === 'add' && settings.welcome) {
-      for (const p of participants) {
-        const msg = settings.welcomeMsg.replace('@user', `@${p.split('@')[0]}`);
-        await sock.sendMessage(id, {
-          text: msg,
-          mentions: [p]
-        });
-      }
-    }
-
-    if (action === 'remove' && settings.goodbye) {
-      for (const p of participants) {
-        const msg = settings.goodbyeMsg.replace('@user', `@${p.split('@')[0]}`);
-        await sock.sendMessage(id, { text: msg });
-      }
-    }
-  });
-
-  // ── Messages ──
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-
-    for (const msg of messages) {
-      try {
-        await handleMessage(msg);
-      } catch (err) {
-        console.error('Message handling error:', err.message);
-      }
-    }
-  });
-
-  // ── Message delete (anti-delete) ──
-  sock.ev.on('messages.delete', async (item) => {
-    if (!item.keys) return;
-    for (const key of item.keys) {
-      const groupId = key.remoteJid;
-      if (!groupId?.endsWith('@g.us')) continue;
-      const settings = getGroupSettings(groupId);
-      if (settings.antiDelete) {
-        const cached = store.messages[groupId]?.get(key.id);
-        if (cached?.message) {
-          await sock.sendMessage(groupId, {
-            text: `🔴 *Anti-Delete* | @${key.participant?.split('@')[0]} deleted a message`,
-            mentions: [key.participant]
-          });
+      io.emit('groups', { groups: Object.values(groups) });
+      const settings = getGroupSettings(id);
+      if (action === 'add' && settings.welcome) {
+        for (const p of participants) {
+          const msg = settings.welcomeMsg.replace('@user', `@${p.split('@')[0]}`);
+          await sock.sendMessage(id, { text: msg, mentions: [p] }).catch(() => {});
         }
       }
-    }
-  });
-}
+      if (action === 'remove' && settings.goodbye) {
+        for (const p of participants) {
+          const msg = settings.goodbyeMsg.replace('@user', `@${p.split('@')[0]}`);
+          await sock.sendMessage(id, { text: msg }).catch(() => {});
+        }
+      }
+    });
 
-// ─── Handle Incoming Messages ─────────────────────────────────────────────────
-async function handleMessage(msg) {
-  if (!msg.message || msg.key.fromMe) return;
+    // ── Messages ──
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        try { await handleMessage(msg); } catch (err) {
+          console.error('Message error:', err.message);
+        }
+      }
+    });
 
-  const jid = msg.key.remoteJid;
-  const isGroup = jid?.endsWith('@g.us');
-  const sender = isGroup ? msg.key.participant : jid;
-  const senderNum = sender?.split('@')[0];
-  const contentType = getContentType(msg.message);
-  const body =
-    msg.message?.conversation ||
+    // ── Anti Delete ──
+    sock.ev.on('messages.delete', async (item) => {
+      if (!item.keys) return;
+      for (const key of item.keys) {
+        const groupId = key.remoteJid;
+        if (!groupId?.endsWith('@g.us')) continue;
+        const settings = getGroupSettings(groupId);
+        if (settings.antiDelete) {
+          await sock.sendMessage(groupId, {
+            text: `🔴 *Anti-Delete* | @${key.participant?.split('@')[0]} একটি মেসেজ ডিলিট করেছে!`,
+            mentions: [key.participant]
+          }).catch(() => {});
+        }
+      }
+    });
+
+  } catch (err) {
+< truncated lines 240-254 >
     msg.message?.extendedTextMessage?.text ||
     msg.message?.imageMessage?.caption ||
-    msg.message?.videoMessage?.caption ||
-    '';
+    msg.message?.videoMessage?.caption || '';
 
   botStats.messagesHandled++;
   io.emit('stats', botStats);
 
-  // ── Always Online / Auto Seen ──
-  await sock.readMessages([msg.key]);
+  await sock.readMessages([msg.key]).catch(() => {});
 
-  // Group-specific handling
   if (isGroup) {
     const settings = getGroupSettings(jid);
 
-    // Auto typing indicator
     if (settings.autoTyping && body.startsWith(settings.prefix)) {
-      await sock.sendPresenceUpdate('composing', jid);
-      setTimeout(() => sock.sendPresenceUpdate('paused', jid), 2000);
+      await sock.sendPresenceUpdate('composing', jid).catch(() => {});
+      setTimeout(() => sock.sendPresenceUpdate('paused', jid).catch(() => {}), 2000);
     }
 
-    // Anti-spam
     if (settings.antiSpam) {
       const spamResult = antiSpam.check(sender, jid);
       if (spamResult.isSpam) {
         await sock.sendMessage(jid, {
-          text: `⚠️ @${senderNum} detected as spam. Warning ${spamResult.count}/3`,
+          text: `⚠️ @${senderNum} স্প্যাম সতর্কতা! (${spamResult.count}/3)`,
           mentions: [sender]
-        });
+        }).catch(() => {});
         if (spamResult.count >= 3 && settings.autoKick) {
-          await sock.groupParticipantsUpdate(jid, [sender], 'remove');
+          await sock.groupParticipantsUpdate(jid, [sender], 'remove').catch(() => {});
         }
         return;
       }
     }
 
-    // Bad word filter
     if (settings.badWordFilter) {
       const hasBadWord = messageFilter.checkBadWords(body, settings.badWords);
       if (hasBadWord) {
-        await sock.sendMessage(jid, { delete: msg.key });
+        await sock.sendMessage(jid, { delete: msg.key }).catch(() => {});
         await sock.sendMessage(jid, {
-          text: `🚫 @${senderNum}, watch your language!`,
+          text: `🚫 @${senderNum}, ভাষা সংযত করো!`,
           mentions: [sender]
-        });
+        }).catch(() => {});
         return;
       }
     }
 
-    // Anti-link
     if (settings.antiLink) {
       const hasLink = messageFilter.checkLinks(body);
       if (hasLink) {
         const isAdmin = await groupManager.isAdmin(sock, jid, sender);
         if (!isAdmin) {
-          await sock.sendMessage(jid, { delete: msg.key });
+          await sock.sendMessage(jid, { delete: msg.key }).catch(() => {});
           await sock.sendMessage(jid, {
-            text: `🔗 @${senderNum}, links are not allowed here!`,
+            text: `🔗 @${senderNum}, এই গ্রুপে লিংক দেওয়া নিষেধ!`,
             mentions: [sender]
-          });
+          }).catch(() => {});
           return;
         }
       }
     }
 
-    // Muted group - no commands
     if (settings.muted && body.startsWith(settings.prefix)) return;
 
-    // ── Auto NSFW Image Detection ──
-    if (settings.antiNSFW && msg.message?.imageMessage) {
-      try {
-        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-        const axios = require('axios');
-        const buffer = await downloadMediaMessage(msg, 'buffer', {});
-        const base64 = buffer.toString('base64');
-
-        if (process.env.HUGGINGFACE_API_KEY && process.env.HUGGINGFACE_API_KEY !== 'your_huggingface_key_here') {
-          const resp = await axios.post(
-            'https://api-inference.huggingface.co/models/Falconsai/nsfw_image_detection',
-            buffer,
-            {
-              headers: {
-                'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-                'Content-Type': 'application/octet-stream'
-              },
-              timeout: 15000
-            }
-          );
-          const results = resp.data;
-          if (Array.isArray(results)) {
-            const nsfw = results.find(r => r.label === 'nsfw' || r.label === 'NSFW');
-            const score = nsfw ? nsfw.score : 0;
-            if (score > 0.7) {
-              await sock.sendMessage(jid, { delete: msg.key });
-              await sock.sendMessage(jid, {
-                text: `🔞 @${senderNum} এর পাঠানো ছবি অনুপযুক্ত মনে হচ্ছে তাই ডিলিট করা হয়েছে!`,
-                mentions: [sender]
-              });
-            }
-          }
-        }
-      } catch (err) {
-        console.error('NSFW check error:', err.message);
-      }
-    }
-
-    // Auto React
     if (settings.autoReact && !body.startsWith(settings.prefix)) {
-      const emojis = ['👍', '❤️', '😂', '😮', '🔥', '👏'];
+      const emojis = ['👍','❤️','😂','😮','🔥','👏'];
       const rand = emojis[Math.floor(Math.random() * emojis.length)];
-      await sock.sendMessage(jid, {
-        react: { text: rand, key: msg.key }
-      });
+      await sock.sendMessage(jid, { react: { text: rand, key: msg.key } }).catch(() => {});
     }
 
-    // Auto Reply
     if (settings.autoReply && settings.autoReplyTriggers) {
       const lowerBody = body.toLowerCase().trim();
       const reply = settings.autoReplyTriggers[lowerBody];
       if (reply) {
-        await sock.sendMessage(jid, { text: reply }, { quoted: msg });
+        await sock.sendMessage(jid, { text: reply }, { quoted: msg }).catch(() => {});
         return;
       }
     }
 
-    // XP System
-    if (settings.xpSystem) {
-      xpSystem.addXP(sender, jid, 1);
-    }
+    if (settings.xpSystem) xpSystem.addXP(sender, jid, 1);
   }
 
-  // ── Command Prefix Check ──
+  // ── Commands ──
   const settings = isGroup ? getGroupSettings(jid) : { prefix: process.env.BOT_PREFIX || '!' };
   if (!body.startsWith(settings.prefix)) return;
 
@@ -398,22 +327,11 @@ async function handleMessage(msg) {
   io.emit('stats', botStats);
 
   const ctx = {
-    sock,
-    msg,
-    jid,
-    sender,
-    senderNum,
-    isGroup,
-    args,
-    body,
+    sock, msg, jid, sender, senderNum, isGroup, args, body,
     settings: isGroup ? getGroupSettings(jid) : {},
-    groupSettings,
-    saveSettings,
-    groups,
-    io
+    groupSettings, saveSettings, groups, io
   };
 
-  // Route commands
   const allCommands = {
     ...funCommands.commands,
     ...adminCommands.commands,
@@ -425,7 +343,7 @@ async function handleMessage(msg) {
     try {
       await allCommands[command](ctx);
     } catch (err) {
-      await sock.sendMessage(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg });
+      await sock.sendMessage(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg }).catch(() => {});
     }
   }
 }
@@ -437,18 +355,16 @@ async function loadGroups() {
     groups = {};
     for (const [id, meta] of Object.entries(allGroups)) {
       groups[id] = {
-        id,
-        name: meta.subject,
+        id, name: meta.subject,
         participants: meta.participants?.length || 0,
         description: meta.desc || '',
-        creation: meta.creation,
-        owner: meta.owner,
         admins: meta.participants?.filter(p => p.admin)?.map(p => p.id) || []
       };
     }
     io.emit('groups', { groups: Object.values(groups) });
+    console.log(`Loaded ${Object.keys(groups).length} groups`);
   } catch (err) {
-    console.error('Error loading groups:', err.message);
+    console.error('loadGroups error:', err.message);
   }
 }
 
@@ -457,74 +373,83 @@ app.get('/api/status', (req, res) => {
   res.json({
     status: botStatus,
     connected: botStats.connected,
-    stats: {
-      ...botStats,
-      uptime: botStats.connected ? Math.floor((Date.now() - botStats.uptime) / 1000) : 0
-    }
+    stats: { ...botStats, uptime: botStats.connected ? Math.floor((Date.now() - botStats.uptime) / 1000) : 0 }
   });
 });
 
-app.get('/api/groups', (req, res) => {
-  res.json({ groups: Object.values(groups) });
+app.get('/api/qr', (req, res) => {
+  if (latestQR) res.json({ qr: latestQR });
+  else res.json({ qr: null, status: botStatus });
 });
 
+app.get('/api/groups', (req, res) => res.json({ groups: Object.values(groups) }));
+
 app.get('/api/group/:id/settings', (req, res) => {
-  const settings = getGroupSettings(decodeURIComponent(req.params.id));
-  res.json(settings);
+  res.json(getGroupSettings(decodeURIComponent(req.params.id)));
 });
 
 app.post('/api/group/:id/settings', (req, res) => {
   const groupId = decodeURIComponent(req.params.id);
-  const current = getGroupSettings(groupId);
-  groupSettings[groupId] = { ...current, ...req.body };
+  groupSettings[groupId] = { ...getGroupSettings(groupId), ...req.body };
   saveSettings();
   res.json({ success: true, settings: groupSettings[groupId] });
 });
 
 app.post('/api/send', async (req, res) => {
   const { jid, text } = req.body;
-  if (!sock || botStatus !== 'connected') {
-    return res.status(400).json({ error: 'Bot not connected' });
-  }
+  if (!sock || botStatus !== 'connected') return res.status(400).json({ error: 'Bot not connected' });
   try {
     await sock.sendMessage(jid, { text });
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/logout', async (req, res) => {
-  try {
-    if (sock) await sock.logout();
-    res.json({ success: true });
-  } catch (err) {
-    res.json({ success: true });
-  }
+  try { if (sock) await sock.logout(); } catch (e) {}
+  res.json({ success: true });
 });
 
 app.get('/api/xp/:groupId', (req, res) => {
-  const data = xpSystem.getLeaderboard(req.params.groupId);
-  res.json(data);
+  res.json(xpSystem.getLeaderboard(req.params.groupId));
 });
 
-// Serve dashboard
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
 });
 
 // ─── Socket.io ────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
-  console.log('Dashboard connected');
+  console.log('Dashboard client connected. Bot status:', botStatus);
 
-  // Send current state
-  socket.emit('status', { status: botStatus, message: botStatus === 'connected' ? 'Bot Connected ✓' : 'Disconnected' });
-  if (qrString) socket.emit('qr', { qr: qrString });
-  if (Object.keys(groups).length) socket.emit('groups', { groups: Object.values(groups) });
+  // সাথে সাথে current state পাঠাও
+  socket.emit('status', {
+    status: botStatus,
+    message: botStatus === 'connected' ? 'Bot Connected ✓'
+           : botStatus === 'qr' ? 'QR Code Ready - Scan করো!'
+           : 'Waiting for connection...'
+  });
+
+  // যদি QR ready থাকে সাথে সাথে পাঠাও
+  if (latestQR) {
+    console.log('Sending cached QR to new client');
+    socket.emit('qr', { qr: latestQR });
+  }
+
+  // Groups পাঠাও
+  if (Object.keys(groups).length) {
+    socket.emit('groups', { groups: Object.values(groups) });
+  }
+
   socket.emit('stats', botStats);
 
+  // Client QR চাইলে
   socket.on('requestQR', () => {
-    if (qrString) socket.emit('qr', { qr: qrString });
+    console.log('Client requested QR. latestQR exists:', !!latestQR);
+    if (latestQR) {
+      socket.emit('qr', { qr: latestQR });
+    } else {
+      socket.emit('status', { status: botStatus, message: 'QR not ready yet, please wait...' });
+    }
   });
 
   socket.on('sendMessage', async ({ jid, text }) => {
@@ -538,17 +463,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
-    console.log('Dashboard disconnected');
-  });
+  socket.on('disconnect', () => console.log('Dashboard client disconnected'));
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// ─── Start Server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n╔════════════════════════════════════════╗`);
   console.log(`║  WhatsApp Bot Dashboard                ║`);
   console.log(`║  Open: http://localhost:${PORT}           ║`);
   console.log(`╚════════════════════════════════════════╝\n`);
-  startBot();
+  // Server চালু হওয়ার পর bot start করো
+  setTimeout(startBot, 1000);
 });
