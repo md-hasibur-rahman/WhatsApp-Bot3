@@ -19,19 +19,15 @@ const path = require('path');
 const fs = require('fs');
 const NodeCache = require('node-cache');
 
-// Command handlers
 const funCommands = require('./commands/fun');
 const adminCommands = require('./commands/admin');
 const aiCommands = require('./commands/ai');
 const mediaCommands = require('./commands/media');
-
-// Utils
 const antiSpam = require('./utils/antiSpam');
 const messageFilter = require('./utils/messageFilter');
 const groupManager = require('./utils/groupManager');
 const xpSystem = require('./utils/xpSystem');
 
-// ─── Express + Socket.io ──────────────────────────────────────────────────────
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
@@ -44,9 +40,8 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'dashboard')));
 
-// ─── Bot State ────────────────────────────────────────────────────────────────
 let sock = null;
-let latestQR = null;      // সবশেষ QR সেভ রাখো
+let latestQR = null;
 let botStatus = 'disconnected';
 let groups = {};
 let botStats = {
@@ -59,14 +54,12 @@ let botStats = {
 const msgRetryCounterCache = new NodeCache();
 const store = makeInMemoryStore({ logger: pino({ level: 'silent' }) });
 
-// ─── Data Directory ───────────────────────────────────────────────────────────
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const sessionsDir = path.join(__dirname, 'sessions');
 if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
-// ─── Group Settings ───────────────────────────────────────────────────────────
 const settingsFile = path.join(dataDir, 'groupSettings.json');
 let groupSettings = {};
 try {
@@ -91,8 +84,8 @@ function getGroupSettings(groupId) {
       autoReply: false, alwaysOnline: true,
       autoTyping: false, xpSystem: false,
       economy: false, antiNSFW: false,
-      welcomeMsg: 'Welcome to the group, @user! 👋',
-      goodbyeMsg: 'Goodbye @user! We will miss you 👋',
+      welcomeMsg: 'Welcome to the group, @user!',
+      goodbyeMsg: 'Goodbye @user!',
       autoReplyTriggers: {},
       badWords: [],
       warnCount: {}, maxWarns: 3,
@@ -104,13 +97,12 @@ function getGroupSettings(groupId) {
   return groupSettings[groupId];
 }
 
-// ─── WhatsApp Bot ─────────────────────────────────────────────────────────────
 async function startBot() {
   try {
     const sessionPath = path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session');
     const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const { version } = await fetchLatestBaileysVersion();
-    console.log(`Using WA v${version.join('.')}`);
+    console.log('Using WA v' + version.join('.'));
 
     sock = makeWASocket({
       version,
@@ -133,22 +125,20 @@ async function startBot() {
 
     store.bind(sock.ev);
 
-    // ── Connection Update ──
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
-      console.log('connection.update:', JSON.stringify({ connection, hasQR: !!qr }));
+      console.log('connection.update:', connection, 'hasQR:', !!qr);
 
       if (qr) {
-        console.log('QR received! Converting to dataURL...');
+        console.log('QR received!');
         try {
           latestQR = await qrcode.toDataURL(qr);
           botStatus = 'qr';
-          // সব connected socket কে QR পাঠাও
           io.emit('qr', { qr: latestQR });
-          io.emit('status', { status: 'qr', message: 'QR Code Ready - Scan করো!' });
-          console.log('QR emitted to all clients');
+          io.emit('status', { status: 'qr', message: 'Scan QR Code!' });
+          console.log('QR emitted to clients');
         } catch (err) {
-          console.error('QR convert error:', err.message);
+          console.error('QR error:', err.message);
         }
       }
 
@@ -162,55 +152,49 @@ async function startBot() {
           ? lastDisconnect.error.output?.statusCode
           : null;
 
-        console.log('Connection closed. Status code:', statusCode);
+        console.log('Connection closed. Code:', statusCode);
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log('Logged out! Clearing session...');
           io.emit('status', { status: 'loggedout', message: 'Logged out! Please refresh.' });
           try {
             const sessionDir = path.join(__dirname, 'sessions', process.env.SESSION_NAME || 'bot-session');
             if (fs.existsSync(sessionDir)) fs.rmSync(sessionDir, { recursive: true, force: true });
           } catch(e) {}
-          setTimeout(startBot, 3000);
-        } else {
-          console.log('Reconnecting in 3 seconds...');
-          setTimeout(startBot, 3000);
         }
+        setTimeout(startBot, 3000);
       }
 
       if (connection === 'open') {
-        console.log('Bot connected successfully!');
+        console.log('Bot connected!');
         latestQR = null;
         botStatus = 'connected';
         botStats.connected = true;
         botStats.uptime = Date.now();
-        io.emit('status', { status: 'connected', message: 'Bot Connected ✓' });
+        io.emit('status', { status: 'connected', message: 'Bot Connected!' });
         await loadGroups();
       }
     });
 
     sock.ev.on('creds.update', saveCreds);
 
-    // ── Group participants update ──
     sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
       await loadGroups();
       io.emit('groups', { groups: Object.values(groups) });
       const settings = getGroupSettings(id);
       if (action === 'add' && settings.welcome) {
         for (const p of participants) {
-          const msg = settings.welcomeMsg.replace('@user', `@${p.split('@')[0]}`);
+          const msg = settings.welcomeMsg.replace('@user', '@' + p.split('@')[0]);
           await sock.sendMessage(id, { text: msg, mentions: [p] }).catch(() => {});
         }
       }
       if (action === 'remove' && settings.goodbye) {
         for (const p of participants) {
-          const msg = settings.goodbyeMsg.replace('@user', `@${p.split('@')[0]}`);
+          const msg = settings.goodbyeMsg.replace('@user', '@' + p.split('@')[0]);
           await sock.sendMessage(id, { text: msg }).catch(() => {});
         }
       }
     });
 
-    // ── Messages ──
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const msg of messages) {
@@ -220,16 +204,15 @@ async function startBot() {
       }
     });
 
-    // ── Anti Delete ──
     sock.ev.on('messages.delete', async (item) => {
       if (!item.keys) return;
       for (const key of item.keys) {
         const groupId = key.remoteJid;
-        if (!groupId?.endsWith('@g.us')) continue;
+        if (!groupId || !groupId.endsWith('@g.us')) continue;
         const settings = getGroupSettings(groupId);
         if (settings.antiDelete) {
           await sock.sendMessage(groupId, {
-            text: `🔴 *Anti-Delete* | @${key.participant?.split('@')[0]} একটি মেসেজ ডিলিট করেছে!`,
+            text: 'Anti-Delete: @' + key.participant?.split('@')[0] + ' deleted a message!',
             mentions: [key.participant]
           }).catch(() => {});
         }
@@ -237,10 +220,23 @@ async function startBot() {
     });
 
   } catch (err) {
-< truncated lines 240-254 >
-    msg.message?.extendedTextMessage?.text ||
-    msg.message?.imageMessage?.caption ||
-    msg.message?.videoMessage?.caption || '';
+    console.error('startBot error:', err.message);
+    setTimeout(startBot, 5000);
+  }
+}
+
+async function handleMessage(msg) {
+  if (!msg.message || msg.key.fromMe) return;
+
+  const jid = msg.key.remoteJid;
+  const isGroup = jid && jid.endsWith('@g.us');
+  const sender = isGroup ? msg.key.participant : jid;
+  const senderNum = sender ? sender.split('@')[0] : '';
+  const body =
+    msg.message.conversation ||
+    (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) ||
+    (msg.message.imageMessage && msg.message.imageMessage.caption) ||
+    (msg.message.videoMessage && msg.message.videoMessage.caption) || '';
 
   botStats.messagesHandled++;
   io.emit('stats', botStats);
@@ -252,14 +248,14 @@ async function startBot() {
 
     if (settings.autoTyping && body.startsWith(settings.prefix)) {
       await sock.sendPresenceUpdate('composing', jid).catch(() => {});
-      setTimeout(() => sock.sendPresenceUpdate('paused', jid).catch(() => {}), 2000);
+      setTimeout(function() { sock.sendPresenceUpdate('paused', jid).catch(() => {}); }, 2000);
     }
 
     if (settings.antiSpam) {
       const spamResult = antiSpam.check(sender, jid);
       if (spamResult.isSpam) {
         await sock.sendMessage(jid, {
-          text: `⚠️ @${senderNum} স্প্যাম সতর্কতা! (${spamResult.count}/3)`,
+          text: 'Spam warning @' + senderNum + '! (' + spamResult.count + '/3)',
           mentions: [sender]
         }).catch(() => {});
         if (spamResult.count >= 3 && settings.autoKick) {
@@ -274,7 +270,7 @@ async function startBot() {
       if (hasBadWord) {
         await sock.sendMessage(jid, { delete: msg.key }).catch(() => {});
         await sock.sendMessage(jid, {
-          text: `🚫 @${senderNum}, ভাষা সংযত করো!`,
+          text: 'Warning @' + senderNum + ', watch your language!',
           mentions: [sender]
         }).catch(() => {});
         return;
@@ -288,7 +284,7 @@ async function startBot() {
         if (!isAdmin) {
           await sock.sendMessage(jid, { delete: msg.key }).catch(() => {});
           await sock.sendMessage(jid, {
-            text: `🔗 @${senderNum}, এই গ্রুপে লিংক দেওয়া নিষেধ!`,
+            text: 'Links are not allowed here @' + senderNum + '!',
             mentions: [sender]
           }).catch(() => {});
           return;
@@ -316,7 +312,6 @@ async function startBot() {
     if (settings.xpSystem) xpSystem.addXP(sender, jid, 1);
   }
 
-  // ── Commands ──
   const settings = isGroup ? getGroupSettings(jid) : { prefix: process.env.BOT_PREFIX || '!' };
   if (!body.startsWith(settings.prefix)) return;
 
@@ -332,130 +327,132 @@ async function startBot() {
     groupSettings, saveSettings, groups, io
   };
 
-  const allCommands = {
-    ...funCommands.commands,
-    ...adminCommands.commands,
-    ...aiCommands.commands,
-    ...mediaCommands.commands
-  };
+  const allCommands = Object.assign({},
+    funCommands.commands,
+    adminCommands.commands,
+    aiCommands.commands,
+    mediaCommands.commands
+  );
 
   if (allCommands[command]) {
     try {
       await allCommands[command](ctx);
     } catch (err) {
-      await sock.sendMessage(jid, { text: `❌ Error: ${err.message}` }, { quoted: msg }).catch(() => {});
+      await sock.sendMessage(jid, { text: 'Error: ' + err.message }, { quoted: msg }).catch(() => {});
     }
   }
 }
 
-// ─── Load Groups ──────────────────────────────────────────────────────────────
 async function loadGroups() {
   try {
     const allGroups = await sock.groupFetchAllParticipating();
     groups = {};
-    for (const [id, meta] of Object.entries(allGroups)) {
+    for (const id in allGroups) {
+      const meta = allGroups[id];
       groups[id] = {
-        id, name: meta.subject,
-        participants: meta.participants?.length || 0,
+        id,
+        name: meta.subject,
+        participants: meta.participants ? meta.participants.length : 0,
         description: meta.desc || '',
-        admins: meta.participants?.filter(p => p.admin)?.map(p => p.id) || []
+        admins: meta.participants ? meta.participants.filter(function(p) { return p.admin; }).map(function(p) { return p.id; }) : []
       };
     }
     io.emit('groups', { groups: Object.values(groups) });
-    console.log(`Loaded ${Object.keys(groups).length} groups`);
+    console.log('Loaded ' + Object.keys(groups).length + ' groups');
   } catch (err) {
     console.error('loadGroups error:', err.message);
   }
 }
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
-app.get('/api/status', (req, res) => {
+app.get('/api/status', function(req, res) {
   res.json({
     status: botStatus,
     connected: botStats.connected,
-    stats: { ...botStats, uptime: botStats.connected ? Math.floor((Date.now() - botStats.uptime) / 1000) : 0 }
+    stats: Object.assign({}, botStats, {
+      uptime: botStats.connected ? Math.floor((Date.now() - botStats.uptime) / 1000) : 0
+    })
   });
 });
 
-app.get('/api/qr', (req, res) => {
+app.get('/api/qr', function(req, res) {
   if (latestQR) res.json({ qr: latestQR });
   else res.json({ qr: null, status: botStatus });
 });
 
-app.get('/api/groups', (req, res) => res.json({ groups: Object.values(groups) }));
+app.get('/api/groups', function(req, res) {
+  res.json({ groups: Object.values(groups) });
+});
 
-app.get('/api/group/:id/settings', (req, res) => {
+app.get('/api/group/:id/settings', function(req, res) {
   res.json(getGroupSettings(decodeURIComponent(req.params.id)));
 });
 
-app.post('/api/group/:id/settings', (req, res) => {
+app.post('/api/group/:id/settings', function(req, res) {
   const groupId = decodeURIComponent(req.params.id);
-  groupSettings[groupId] = { ...getGroupSettings(groupId), ...req.body };
+  groupSettings[groupId] = Object.assign({}, getGroupSettings(groupId), req.body);
   saveSettings();
   res.json({ success: true, settings: groupSettings[groupId] });
 });
 
-app.post('/api/send', async (req, res) => {
-  const { jid, text } = req.body;
+app.post('/api/send', async function(req, res) {
+  const jid = req.body.jid;
+  const text = req.body.text;
   if (!sock || botStatus !== 'connected') return res.status(400).json({ error: 'Bot not connected' });
   try {
-    await sock.sendMessage(jid, { text });
+    await sock.sendMessage(jid, { text: text });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/logout', async (req, res) => {
+app.post('/api/logout', async function(req, res) {
   try { if (sock) await sock.logout(); } catch (e) {}
   res.json({ success: true });
 });
 
-app.get('/api/xp/:groupId', (req, res) => {
+app.get('/api/xp/:groupId', function(req, res) {
   res.json(xpSystem.getLeaderboard(req.params.groupId));
 });
 
-app.get('*', (req, res) => {
+app.get('*', function(req, res) {
   res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
 });
 
-// ─── Socket.io ────────────────────────────────────────────────────────────────
-io.on('connection', (socket) => {
-  console.log('Dashboard client connected. Bot status:', botStatus);
+io.on('connection', function(socket) {
+  console.log('Dashboard connected. Status:', botStatus);
 
-  // সাথে সাথে current state পাঠাও
   socket.emit('status', {
     status: botStatus,
-    message: botStatus === 'connected' ? 'Bot Connected ✓'
-           : botStatus === 'qr' ? 'QR Code Ready - Scan করো!'
+    message: botStatus === 'connected' ? 'Bot Connected!'
+           : botStatus === 'qr' ? 'Scan QR Code!'
            : 'Waiting for connection...'
   });
 
-  // যদি QR ready থাকে সাথে সাথে পাঠাও
   if (latestQR) {
     console.log('Sending cached QR to new client');
     socket.emit('qr', { qr: latestQR });
   }
 
-  // Groups পাঠাও
   if (Object.keys(groups).length) {
     socket.emit('groups', { groups: Object.values(groups) });
   }
 
   socket.emit('stats', botStats);
 
-  // Client QR চাইলে
-  socket.on('requestQR', () => {
-    console.log('Client requested QR. latestQR exists:', !!latestQR);
+  socket.on('requestQR', function() {
+    console.log('QR requested. Available:', !!latestQR);
     if (latestQR) {
       socket.emit('qr', { qr: latestQR });
     } else {
-      socket.emit('status', { status: botStatus, message: 'QR not ready yet, please wait...' });
+      socket.emit('status', { status: botStatus, message: 'QR not ready, please wait...' });
     }
   });
 
-  socket.on('sendMessage', async ({ jid, text }) => {
+  socket.on('sendMessage', async function(data) {
     if (sock && botStatus === 'connected') {
       try {
-        await sock.sendMessage(jid, { text });
+        await sock.sendMessage(data.jid, { text: data.text });
         socket.emit('messageSent', { success: true });
       } catch (err) {
         socket.emit('messageSent', { success: false, error: err.message });
@@ -463,16 +460,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => console.log('Dashboard client disconnected'));
+  socket.on('disconnect', function() {
+    console.log('Dashboard disconnected');
+  });
 });
 
-// ─── Start Server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n╔════════════════════════════════════════╗`);
-  console.log(`║  WhatsApp Bot Dashboard                ║`);
-  console.log(`║  Open: http://localhost:${PORT}           ║`);
-  console.log(`╚════════════════════════════════════════╝\n`);
-  // Server চালু হওয়ার পর bot start করো
+server.listen(PORT, '0.0.0.0', function() {
+  console.log('WhatsApp Bot Dashboard running on port ' + PORT);
   setTimeout(startBot, 1000);
 });
